@@ -1,0 +1,17 @@
+debug/addshapecommand.o
+debug/artboardview.o
+debug/clearallcommand.o
+debug/deletemultipleshapescommand.o
+debug/deleteshapecommand.o
+debug/ellipseshape.o
+debug/eraserpathshape.o
+debug/freehandpathshape.o
+debug/lineshape.o
+debug/main.o
+debug/mainwindow.o
+debug/moveshapecommand.o
+debug/rectangleshape.o
+debug/starshape.o
+debug/qrc_resources.o
+debug/moc_artboardview.o
+debug/moc_mainwindow.o

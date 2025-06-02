@@ -1,0 +1,21 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>icons/arrow_selector.svg</file>
+        <file>icons/clear.svg</file>
+        <file>icons/clicking_eraser.svg</file>
+        <file>icons/color.svg</file>
+        <file>icons/dragging_eraser.svg</file>
+        <file>icons/freehand_pen.svg</file>
+        <file>icons/inner_color.svg</file>
+        <file>icons/line.svg</file>
+        <file>icons/normal_eraser.svg</file>
+        <file>icons/redo.svg</file>
+        <file>icons/save.svg</file>
+        <file>icons/square.svg</file>
+        <file>icons/undo.svg</file>
+        <file>icons/file_open.svg</file>
+        <file>icons/ellipse.svg</file>
+        <file>icons/star.svg</file>
+        <file alias="Fishplate_Artboard.png">icons/Fishplate_Artboard.png</file>
+    </qresource>
+</RCC>
