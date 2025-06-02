@@ -1,0 +1,17 @@
+release/addshapecommand.o
+release/artboardview.o
+release/clearallcommand.o
+release/deletemultipleshapescommand.o
+release/deleteshapecommand.o
+release/ellipseshape.o
+release/eraserpathshape.o
+release/freehandpathshape.o
+release/lineshape.o
+release/main.o
+release/mainwindow.o
+release/moveshapecommand.o
+release/rectangleshape.o
+release/starshape.o
+release/qrc_resources.o
+release/moc_artboardview.o
+release/moc_mainwindow.o
