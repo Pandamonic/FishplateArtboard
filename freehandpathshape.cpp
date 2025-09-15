@@ -8,6 +8,8 @@
 #include <QPen>                 // 用于设置画笔
 #include <QPainterPathStroker>  // containsPoint 方法需要
 #include <QDebug>               // 用于调试输出 (如果需要)
+#include <QJsonObject>
+#include <QJsonArray>
 
 /// @brief FreehandPathShape 构造函数的实现。
 /// @param points 构成自由曲线的初始点集。
@@ -48,65 +50,61 @@ void FreehandPathShape::buildPath()
     // 如果 m_points 为空，m_painterPath 也会是空的 (默认构造或 clear() 后)
 }
 
-/// @brief FreehandPathShape 类的 draw 方法实现。
-/// 使用 QPainter 根据当前路径的属性（颜色、线宽）绘制自由曲线。
 void FreehandPathShape::draw(QPainter *painter)
 {
-    if (!painter || m_painterPath.isEmpty()) { // 安全检查，如果 painter 无效或路径为空则不绘制
+    if (!painter || m_painterPath.isEmpty()) {
         return;
     }
 
-    painter->save(); // 保存 QPainter 当前状态
+    painter->save(); // 保存状态
 
-    // 1. 创建并配置画笔 (QPen)
+    // 以路径包围盒的中心为旋转中心
+    QPointF center = m_painterPath.boundingRect().center();
+    painter->translate(center);
+    painter->rotate(m_rotationAngle);
+    painter->translate(-center);
+
+    // 设置画笔
     QPen pen;
-    pen.setColor(this->getBorderColor());   // 使用从基类继承的边框颜色
-    pen.setWidth(this->getPenWidth());     // 使用从基类继承的线宽
-    // 对于自由画笔，圆形的线帽和连接点能使笔迹看起来更平滑、自然
+    pen.setColor(this->getBorderColor());
+    pen.setWidth(this->getPenWidth());
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     painter->setPen(pen);
 
-    // 2. 自由曲线通常不填充，明确设置画刷为 NoBrush
     painter->setBrush(Qt::NoBrush);
 
-    // 3. 绘制预先构建好的 QPainterPath 对象
+    // 在旋转后的坐标系上绘制路径
     painter->drawPath(m_painterPath);
 
-    painter->restore(); // 恢复 QPainter 状态
+    painter->restore(); // 恢复状态
 }
 
-/// @brief FreehandPathShape 类的 getBoundingRect 方法实现。
-/// 返回包含整个自由曲线路径的最小外接矩形。
+
 QRect FreehandPathShape::getBoundingRect() const
 {
-    if (m_painterPath.isEmpty()) {
-        return QRect(); // 空路径返回空矩形
-    }
-    // QPainterPath::controlPointRect() 返回包含所有路径点和控制点的最小矩形(QRectF)。
-    // toAlignedRect() 将其转换为像素对齐的整数坐标 QRect。
-    return m_painterPath.controlPointRect().toAlignedRect();
+    if (m_rotationAngle == 0.0) return m_painterPath.controlPointRect().toAlignedRect();
+    QTransform t;
+    QPointF center = m_painterPath.boundingRect().center();
+    t.translate(center.x(), center.y());
+    t.rotate(m_rotationAngle);
+    t.translate(-center.x(), -center.y());
+    return t.mapRect(m_painterPath.boundingRect()).toAlignedRect();
 }
 
-/// @brief FreehandPathShape 类的 containsPoint 方法实现。
-/// 判断给定的点是否在自由曲线路径的有效点击区域内（考虑到线宽和容差）。
 bool FreehandPathShape::containsPoint(const QPoint &point) const
 {
-    if (m_painterPath.isEmpty()) {
-        return false; // 空路径不包含任何点
-    }
+    QTransform t;
+    QPointF center = m_painterPath.boundingRect().center();
+    t.translate(center.x(), center.y());
+    t.rotate(m_rotationAngle);
+    t.translate(-center.x(), -center.y());
 
-    // 使用 QPainterPathStroker 来创建一个代表“有宽度”的路径描边，
-    // 然后判断点是否在该描边路径内部。
+    QPointF unrotatedPoint = t.inverted().map(QPointF(point));
+
     QPainterPathStroker stroker;
-    // 设置描边的宽度，基于图形的实际线宽，并增加一些容差方便用户点击。
-    stroker.setWidth(this->getPenWidth() + 4.0); // 例如，增加4像素的点击容差
-    stroker.setCapStyle(Qt::RoundCap);     // 与绘制时的线帽样式保持一致
-    stroker.setJoinStyle(Qt::RoundJoin);   // 与绘制时的连接样式保持一致
-
-    QPainterPath strokedPath = stroker.createStroke(m_painterPath); // 生成描边路径
-
-    return strokedPath.contains(point); // 判断点是否在描边路径内
+    stroker.setWidth(this->getPenWidth() + 4.0);
+    return stroker.createStroke(m_painterPath).contains(unrotatedPoint);
 }
 
 /// @brief FreehandPathShape 类的 moveBy 方法实现。
@@ -145,4 +143,36 @@ void FreehandPathShape::setPoints(const QVector<QPoint> &points)
 {
     m_points = points; // 用新的点集替换旧的点集
     buildPath();       // 重新构建 QPainterPath
+}
+
+
+QJsonObject FreehandPathShape::toJsonObject() const
+{
+    QJsonObject json;
+    json["type"] = "Freehand";
+    json["pen_width"] = this->getPenWidth();
+    json["border_color"] = this->getBorderColor().name();
+
+    QJsonObject geometry;
+    QJsonArray pointsArray;
+    // 遍历所有点
+    for(const QPoint &p : m_points){
+        // 将每个 QPoint(x,y) 转换为 [x, y] 数组，并添加到 pointsArray 中
+        pointsArray.append(QJsonArray({p.x(), p.y()}));
+    }
+    geometry["points"] = pointsArray;
+
+    json["geometry"] = geometry;
+    return json;
+}
+
+QPointF FreehandPathShape::getCenter() const
+{
+    // 自由路径的几何中心，就是其外包围盒的中心
+    return m_painterPath.boundingRect().center();
+}
+
+QRectF FreehandPathShape::getCoreGeometry() const
+{
+    return getBoundingRect();
 }

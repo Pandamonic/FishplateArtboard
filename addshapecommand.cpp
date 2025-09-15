@@ -63,6 +63,9 @@ void AddShapeCommand::execute()
 
 /// @brief 撤销“添加图形”命令。
 /// 此方法将 m_shapeToAdd 从 ArtboardView 的图形列表中移除，并更新视图。
+// ----------------- addshapecommand.cpp (请完整替换此函数) -----------------
+/// @brief 撤销“添加图形”命令。
+/// 此方法将 m_shapeToAdd 从 ArtboardView 的图形列表中移除，并更新视图。
 void AddShapeCommand::undo()
 {
     // 安全检查
@@ -75,6 +78,13 @@ void AddShapeCommand::undo()
     //    QVector::removeAll() 会移除所有指向 m_shapeToAdd 内存地址的指针。
     int removedCount = m_artboardView->shapesList.removeAll(m_shapeToAdd);
 
+
+    // [ 关键修正 ]
+    // 这里是我们修改的地方。
+    // 检查被移除的图形是否在当前的选择列表中，如果是，则将它从列表中移除。
+    m_artboardView->m_selectedShapes.removeOne(m_shapeToAdd);
+
+
     if (removedCount > 0) {
         // 2. 更新所有权标志：图形已从视图列表移除，命令重新完全“拥有”它。
         m_isShapeOwnedByView = false;
@@ -84,7 +94,7 @@ void AddShapeCommand::undo()
         qDebug() << "AddShapeCommand: Undone - Shape at" << (void*)m_shapeToAdd << "removed from view.";
     } else {
         // 如果图形在列表中没找到，可能意味着状态不一致或逻辑错误。
-        qDebug() << "AddShapeCommand::undo() - Shape at" << (void*)m_shapeToAdd << "was not found in view's list to remove.";
+        qWarning() << "AddShapeCommand::undo() - Shape at" << (void*)m_shapeToAdd << "was not found in view's list to remove.";
         // 即使没找到，也应该将 m_isShapeOwnedByView 设为 false。
         m_isShapeOwnedByView = false;
     }

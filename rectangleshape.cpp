@@ -1,139 +1,144 @@
-// ---------------------------------------------------------------------------
-// 描述: RectangleShape 类的实现文件。
-//       包含构造函数、绘制方法 (支持边框和填充)、边界计算、点击判断等。
-// ---------------------------------------------------------------------------
-
 #include "rectangleshape.h"
 #include <QPainter>
 #include <QPen>
 #include <QBrush>
-#include <QPainterPath>         // 用于 containsPoint 的边框精确判断
-#include <QPainterPathStroker>  // 用于 containsPoint 的边框精确判断
-#include <QDebug>               // 用于调试输出
+#include <QPainterPath>
+#include <QPainterPathStroker>
+#include <QJsonArray>
 
-/// @brief RectangleShape 构造函数的实现。
-/// @param topLeft 定义矩形的一个角点。
-/// @param bottomRight 定义矩形的另一个角点。
-/// @param borderColor 矩形的边框颜色。
-/// @param penWidth 矩形的边框线宽。
-/// @param filled 矩形是否被填充。
-/// @param fillColor 矩形的填充颜色。
-RectangleShape::RectangleShape(const QPoint &topLeft, const QPoint &bottomRight,
-                               const QColor &borderColor, int penWidth,
-                               bool filled, const QColor &fillColor)
-    : AbstractShape(ShapeType::Rectangle, borderColor, penWidth, filled, fillColor), // 调用基类构造函数
-    m_topLeft(topLeft),         // 初始化第一个定义点
-    m_bottomRight(bottomRight)  // 初始化第二个定义点
+
+RectangleShape::RectangleShape(const QRectF &rect, const QColor &borderColor, int penWidth, bool filled, const QColor &fillColor)
+    : AbstractShape(ShapeType::Rectangle, borderColor, penWidth, filled, fillColor),
+    m_rect(rect)
 {
-    // qDebug() << "RectangleShape created.";
 }
 
-/// @brief 根据 m_topLeft 和 m_bottomRight 计算并返回一个标准化的 QRectF。
-/// 标准化确保矩形的左上角 x,y 坐标总是小于等于右下角 x,y 坐标，
-/// 从而得到一个宽度和高度为正的有效矩形，方便绘制和计算。
-/// 使用 QRectF 是为了在几何计算和绘制时获得更高的浮点精度。
-QRectF RectangleShape::getNormalizedRectF() const
-{
-    // QRectF 的构造函数 QRectF(const QPointF &topLeft, const QPointF &bottomRight)
-    // 以及其 normalized() 方法可以很好地处理任意两个对角点定义的矩形。
-    return QRectF(m_topLeft, m_bottomRight).normalized();
-}
-
-/// @brief RectangleShape 类的 draw 方法实现。
-/// 使用 QPainter 根据当前矩形的属性（边框颜色、线宽、是否填充、填充颜色）绘制矩形。
 void RectangleShape::draw(QPainter *painter)
 {
-    if (!painter) { // 安全检查
-        qWarning("RectangleShape::draw() - Painter is null!");
-        return;
-    }
+    if (!painter || m_rect.isNull()) return;
 
-    QRectF rectToDraw = getNormalizedRectF(); // 获取标准化的矩形区域进行绘制
-    if (rectToDraw.isNull() || !rectToDraw.isValid()) { // 如果矩形无效（例如宽高为0），则不绘制
-        return;
-    }
+    painter->save(); // 1. 保存QPainter当前状态（像创建一个存档）
 
-    painter->save(); // 保存 QPainter 当前状态 (画笔、画刷等)
+    // 计算旋转中心
+    QPointF center = m_rect.center();
 
-    // 1. 设置画笔 (QPen)，用于绘制矩形的边框
-    QPen pen;
-    pen.setColor(this->getBorderColor()); // 使用从基类继承的边框颜色
-    pen.setWidth(this->getPenWidth());   // 使用从基类继承的线宽
-    // pen.setStyle(Qt::SolidLine);     // (可选) 明确边框样式
-    // pen.setJoinStyle(Qt::MiterJoin); // (可选) 矩形角点通常用 MiterJoin
+    // 2. 将坐标系原点移动到矩形中心
+    painter->translate(center);
+    // 3. 旋转坐标系
+    painter->rotate(m_rotationAngle);
+    // 4. 将坐标系原点移回原来的位置
+    painter->translate(-center);
+
+    // 5. 在这个已经被旋转的坐标系上，像平常一样画矩形
+    QPen pen(this->getBorderColor(), this->getPenWidth());
     painter->setPen(pen);
-
-    // 2. 设置画刷 (QBrush)，用于填充矩形的内部区域
-    if (this->isFilled()) { // 如果设置了要填充
-        QBrush brush;
-        brush.setColor(this->getFillColor()); // 使用从基类继承的填充颜色
-        brush.setStyle(Qt::SolidPattern);     // 设置为实心填充模式
-        painter->setBrush(brush);
-    } else { // 如果不填充
-        painter->setBrush(Qt::NoBrush); // 设置为无填充画刷，这样 drawRect 只会画边框
+    if (this->isFilled()) {
+        painter->setBrush(QBrush(this->getFillColor()));
+    } else {
+        painter->setBrush(Qt::NoBrush);
     }
+    painter->drawRect(m_rect);
 
-    // 3. 绘制矩形
-    // QPainter::drawRect() 会同时使用当前的画笔 (pen) 绘制边框，和当前的画刷 (brush) 填充内部。
-    painter->drawRect(rectToDraw);
-
-    painter->restore(); // 恢复 QPainter 到 save() 之前的状态，避免影响后续其他图形的绘制
+    painter->restore(); // 6. 恢复到存档时的状态，以免影响其他图形的绘制
 }
 
-/// @brief RectangleShape 类的 getBoundingRect 方法实现。
-/// 对于矩形，其自身的标准化矩形就是它的包围盒。
-/// @return QRect 对象，表示此矩形的整数坐标包围盒。
-QRect RectangleShape::getBoundingRect() const
+// ----------------- 替换这三个文件中的 getBoundingRect 函数 -----------------
+QRect RectangleShape::getBoundingRect() const // "TheShape" 指代 RectangleShape, EllipseShape 或 StarShape
 {
-    return getNormalizedRectF().toAlignedRect(); // toAlignedRect() 将 QRectF 转换为包含它的最小整数 QRect
-}
-
-/// @brief RectangleShape 类的 containsPoint 方法实现。
-/// 判断给定的点是否在矩形内部（如果填充）或其边框附近（如果只画边框）。
-bool RectangleShape::containsPoint(const QPoint &point) const
-{
-    QRectF rect = getNormalizedRectF(); // 获取标准化的矩形
-    if (rect.isNull() || !rect.isValid()) { // 无效矩形不包含任何点
-        return false;
+    // 如果没有旋转，就用最快的方式返回
+    if (m_rotationAngle == 0.0) {
+        return m_rect.normalized().toAlignedRect();
     }
 
-    QPointF pointF(point); // 将整数点转换为浮点型进行比较
+    // 1. 创建一个变换矩阵
+    QTransform transform;
+    // 2. 以图形中心为原点
+    transform.translate(m_rect.center().x(), m_rect.center().y());
+    // 3. 旋转
+    transform.rotate(m_rotationAngle);
+    // 4. 将原点移回
+    transform.translate(-m_rect.center().x(), -m_rect.center().y());
 
-    if (this->isFilled()) { // 如果矩形是填充的
-        // 直接使用 QRectF::contains() 方法判断点是否在矩形区域内部。
-        // 这个方法通常不包含矩形的右边和下边（如果 proper=true，默认）。
-        // 为了点击选中更容易，可以用 contains(pointF, false) 或者稍微扩大矩形。
-        // 或者，如果视觉上填充区域就是整个矩形，那么直接 contains 就可以。
-        return rect.contains(pointF);
-    } else { // 如果矩形只画边框 (未填充)
-        // 判断点是否在矩形的四条边框线上（考虑线宽和容差）。
-        // 使用 QPainterPath 和 QPainterPathStroker 是一个较好的方法。
+    // 5. 使用这个矩阵来映射（计算）旋转后的外包围盒
+    return transform.mapRect(m_rect.normalized()).toAlignedRect();
+}
+
+bool RectangleShape::containsPoint(const QPoint &point) const // "TheShape" 指代 RectangleShape 等
+{
+    // 如果没有旋转，用最快的方式判断
+    if (m_rotationAngle == 0.0) {
+        // 这里是你原来的 containsPoint 逻辑
+        if (isFilled()) { return m_rect.contains(point); }
+        else { /* ... stroker logic ... */ }
+    }
+
+    // 1. 创建与 draw() 方法中完全一样的变换矩阵
+    QTransform transform;
+    transform.translate(m_rect.center().x(), m_rect.center().y());
+    transform.rotate(m_rotationAngle);
+    transform.translate(-m_rect.center().x(), -m_rect.center().y());
+
+    // 2. 获取该变换的“逆矩阵”
+    QTransform inverseTransform = transform.inverted();
+
+    // 3. 将用户点击的点，通过逆矩阵，“反向旋转”回去
+    QPointF unrotatedPoint = inverseTransform.map(QPointF(point));
+
+    // 4. 判断这个“反向旋转”后的点，是否在“未旋转”的原始图形内部
+    //    这里的逻辑就和我们之前写的 containsPoint 完全一样了
+    if (isFilled()) {
+        return m_rect.contains(unrotatedPoint);
+    } else {
         QPainterPath path;
-        path.addRect(rect); // 将矩形添加到路径中
-
+        path.addRect(m_rect); // 对于椭圆是 addEllipse
         QPainterPathStroker stroker;
-        stroker.setWidth(this->getPenWidth() + 4.0); // 线宽加上一些容差
-        stroker.setCapStyle(Qt::SquareCap);          // 矩形端点用方形线帽
-        stroker.setJoinStyle(Qt::MiterJoin);         // 矩形角点用斜接
-
-        QPainterPath strokedPath = stroker.createStroke(path); // 生成描边路径
-
-        return strokedPath.contains(pointF); // 判断点是否在描边路径内
+        stroker.setWidth(this->getPenWidth() + 4.0);
+        return stroker.createStroke(path).contains(unrotatedPoint);
     }
 }
 
-/// @brief RectangleShape 类的 moveBy 方法实现。
-/// 将定义矩形的两个对角点都按照给定的偏移量进行平移。
 void RectangleShape::moveBy(const QPoint &offset)
 {
-    m_topLeft += offset;     // 平移第一个定义点
-    m_bottomRight += offset; // 平移第二个定义点
-    // 由于矩形的绘制是基于这两个点实时计算的，移动它们即可移动整个矩形。
+    m_rect.translate(offset);
 }
 
-/// @brief RectangleShape 类的 updateShape 方法实现。
-/// 通常在鼠标拖动创建或修改矩形时调用，用于更新其第二个定义点。
 void RectangleShape::updateShape(const QPoint &point)
 {
-    m_bottomRight = point; // 将定义矩形的第二个点更新为当前鼠标位置
+    m_rect.setBottomRight(point);
+}
+
+void RectangleShape::setGeometry(const QRect &rect)
+{
+    m_rect = rect;
+}
+
+
+QJsonObject RectangleShape::toJsonObject() const
+{
+    QJsonObject json;
+    json["type"] = "Rectangle";
+    json["pen_width"] = this->getPenWidth();
+    json["border_color"] = this->getBorderColor().name();
+    json["is_filled"] = this->isFilled();
+    json["fill_color"] = this->getFillColor().name(QColor::HexArgb);
+
+    QJsonObject geometry;
+    geometry["x"] = m_rect.x();
+    geometry["y"] = m_rect.y();
+    geometry["width"] = m_rect.width();
+    geometry["height"] = m_rect.height();
+    json["rotation"] = m_rotationAngle;
+    json["geometry"] = geometry;
+
+    return json;
+}
+
+QPointF RectangleShape::getCenter() const
+{
+    return m_rect.center();
+}
+
+QRectF RectangleShape::getCoreGeometry() const
+{
+    return m_rect;
 }

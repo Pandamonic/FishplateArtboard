@@ -9,9 +9,26 @@
 #include <QPixmap>           // (QPixmap 也可用于图像操作，但 QImage 更适合底层像素操作)
 #include <QMessageBox>       // 用于向用户显示提示或警告信息对话框
 #include <QIcon>             // 用于我的程序的左上角的图标
+#include <QPalette>
+
+#include <QInputDialog>          // <--- 新增，用于弹出输入框
+#include <QNetworkAccessManager> // <--- 新增，网络访问管理器
+#include <QNetworkRequest>       // <--- 新增，用于构造网络请求
+#include <QNetworkReply>         // <--- 新增，用于处理网络响应
+#include <QJsonDocument>         // <--- 新增，处理JSON文档
+#include <QJsonObject>         // <--- 新增，处理JSON对象
+#include <QJsonArray>          // <--- 新增，处理JSON数组
+#include "addmultipleshapescommand.h" // <--- 新增，引入我们之前创建的批量添加命令
+#include "aipromptdialog.h"
 
 #include "artboardview.h"    // 确保包含了 ArtboardView 的完整定义
 #include "clearallcommand.h" // 包含了清空画布命令的定义
+#include "abstractshape.h"
+#include "groupshape.h"
+#include "groupcommand.h"
+#include "ungroupcommand.h"
+
+
 
 // 如果其他命令类在 MainWindow 的槽函数中被直接创建 (虽然目前大部分是在 ArtboardView 中)，
 // 也需要在这里包含它们的头文件。
@@ -165,6 +182,9 @@ MainWindow::MainWindow(QWidget *parent)
     if (ui->actionRedo) {
         ui->actionRedo->setEnabled(false);
     }
+
+    setupAdaptiveIcons();
+
 }
 
 /// @brief MainWindow 类的析构函数。
@@ -480,101 +500,83 @@ void MainWindow::on_actionClearCanvas_triggered()
     }
 }
 
-/// @brief 响应“导出图片”QAction (ui->actionExportImage) 被触发的槽函数。
-///
-/// 当用户点击“导出图片”按钮或菜单项时，此函数被调用。它会：
-/// 1. 弹出一个 QFileDialog::getSaveFileName() 文件保存对话框，让用户选择保存路径、
-///    文件名以及图片格式（如PNG, JPG, BMP）。
-/// 2. 如果用户确认了文件名，则调用 ArtboardView 的 renderToImage() 方法获取当前画布的 QImage。
-/// 3. 将获取到的 QImage 保存到用户指定的文件。
-/// 4. 根据保存结果给出相应的调试信息或用户提示。
-/// @note 此槽函数依赖 Qt 的 MOC 自动连接机制。
-void MainWindow::on_actionExportImage_triggered()
+void MainWindow::on_actionOpen_triggered()
 {
-    if (!myArtboardView) {
-        qWarning("MainWindow::on_actionExportImage_triggered - myArtboardView is null!");
-        return;
-    }
-    qDebug() << "MainWindow: ExportImage action triggered.";
+    // 定义文件类型过滤器，让用户可以选择
+    const QString filter = tr("所有支持的文件 (*.fpa *.png *.jpg *.jpeg *.bmp);;Fishplate工程文件 (*.fpa);;图片文件 (*.png *.jpg *.jpeg *.bmp)");
 
-    // 1. 弹出文件保存对话框
-    QString fileName = QFileDialog::getSaveFileName(this, // 父窗口
-                                                    tr("导出图片为..."),                               // 对话框标题
-                                                    QString(),                                       // 默认打开的目录 (空字符串表示上次使用或系统默认)
-                                                    tr("PNG 文件 (*.png);;JPEG 文件 (*.jpg *.jpeg);;BMP 文件 (*.bmp);;所有文件 (*.*)")); // 文件类型过滤器
+    // 弹出文件打开对话框
+    QString filePath = QFileDialog::getOpenFileName(
+        this,
+        tr("打开文件"),
+        "",
+        filter
+        );
 
-    if (fileName.isEmpty()) { // 如果用户点击了“取消”或关闭了对话框，文件名会为空
-        qDebug() << "MainWindow: Export image cancelled by user.";
-        return; // 不执行任何操作
+    if (filePath.isEmpty()) {
+        return; // 用户点击了取消
     }
 
-    // 2. 从 ArtboardView 获取要保存的图像数据
-    QImage imageToSave = myArtboardView->renderToImage();
-
-    // 3. 检查获取的图像是否有效
-    if (imageToSave.isNull()) {
-        qWarning() << "MainWindow: Failed to export image - renderToImage() returned a null image.";
-        QMessageBox::critical(this, tr("导出失败"), tr("无法生成要导出的图像。"));
-        return;
+    // [ 关键修正 ]
+    // 不再检查 selectedFilter，而是直接检查文件名的后缀
+    if (filePath.endsWith(".fpa", Qt::CaseInsensitive)) { // Qt::CaseInsensitive 表示不区分大小写
+        // 如果选择的是工程文件，则调用加载数据库的函数
+        if (myArtboardView->loadFromDatabase(filePath)) { //
+            QMessageBox::information(this, tr("加载成功"), tr("已成功加载工程。"));
+        } else {
+            QMessageBox::critical(this, tr("加载失败"), tr("无法从指定文件加载工程。"));
+        }
     }
-
-    // 4. 保存 QImage 到用户指定的文件
-    //    QImage::save() 方法会根据文件名的后缀自动判断并使用相应的图片格式。
-    if (imageToSave.save(fileName)) {
-        qDebug() << "MainWindow: Image successfully exported to" << fileName;
-        QMessageBox::information(this, tr("导出成功"), tr("图像已成功导出到：\n%1").arg(fileName));
-    } else {
-        qWarning() << "MainWindow: Failed to save image to" << fileName;
-        QMessageBox::critical(this, tr("导出失败"), tr("无法将图像保存到指定文件。\n请检查路径和权限。"));
+    else // 否则，我们认为用户选择的是图片文件
+    {
+        QImage backgroundImageToLoad;
+        if (backgroundImageToLoad.load(filePath)) {
+            // 如果是图片文件，则调用设置背景图的函数
+            myArtboardView->setBackgroundImage(backgroundImageToLoad); //
+        } else {
+            // 如果加载图片也失败了（比如文件损坏），才报这个错
+            QMessageBox::warning(this, tr("打开图片失败"), tr("无法加载选定的图像文件。"));
+        }
     }
 }
 
-/// @brief 响应“打开图片”QAction (ui->actionOpenImage) 被触发的槽函数。
-///
-/// 当用户点击“打开图片”按钮或菜单项时，此函数被调用。它会：
-/// 1. 弹出一个 QFileDialog::getOpenFileName() 文件打开对话框，让用户选择要作为背景的图片文件。
-/// 2. 如果用户确认了文件名，则尝试加载该图片文件到 QImage 对象。
-/// 3. 如果图片加载成功，则调用 ArtboardView 的 setBackgroundImage() 方法将其设置为画布背景。
-/// 4. 根据加载结果给出相应的调试信息或用户提示。
-/// @note 此槽函数依赖 Qt 的 MOC 自动连接机制。
-void MainWindow::on_actionOpenImage_triggered()
+
+void MainWindow::on_actionSaveAs_triggered()
 {
-    if (!myArtboardView) { // 防御性检查
-        qWarning("MainWindow::on_actionOpenImage_triggered - myArtboardView is null!");
-        return;
-    }
-    qDebug() << "MainWindow: OpenImage action triggered.";
+    // 定义文件类型过滤器
+    const QString filter = tr("Fishplate工程文件 (*.fpa);;PNG图片 (*.png);;JPEG图片 (*.jpg)");
 
-    // 1. 弹出文件打开对话框
-    QString fileName = QFileDialog::getOpenFileName(this,
-                                                    tr("打开图片作为背景"),
-                                                    QString(),
-                                                    tr("图像文件 (*.png *.jpg *.jpeg *.bmp);;所有文件 (*.*)"));
+    // 弹出文件保存对话框
+    QString filePath = QFileDialog::getSaveFileName(
+        this,
+        tr("另存为"),
+        "",
+        filter
+        );
 
-    if (fileName.isEmpty()) { // 用户取消选择
-        qDebug() << "MainWindow: Open background image cancelled by user.";
-        return;
+    if (filePath.isEmpty()) {
+        return; // 用户点击了取消
     }
 
-    // 2. 加载选中的图片文件
-    QImage backgroundImageToLoad;
-    if (!backgroundImageToLoad.load(fileName)) { // 尝试加载
-        qWarning() << "MainWindow: Failed to load background image from" << fileName;
-        QMessageBox::warning(this, tr("打开图片失败"),
-                             tr("无法加载选定的图像文件。\n请检查文件路径和格式是否正确。"));
-        // (可选) 如果加载失败，可以考虑是否要清除 ArtboardView 中可能存在的旧背景
-        // myArtboardView->clearBackgroundImage();
-        return;
+    // [ 关键修正 ]
+    // 同样，我们直接检查最终文件名的后缀
+    if (filePath.endsWith(".fpa", Qt::CaseInsensitive)) {
+        // 调用保存到数据库的函数
+        if (!myArtboardView->saveToDatabase(filePath)) { //
+            QMessageBox::critical(this, tr("保存失败"), tr("无法将工程保存到指定文件。"));
+        } else {
+            QMessageBox::information(this, tr("保存成功"), tr("工程已成功保存。"));
+        }
     }
-
-    // 3. 如果图片加载成功 (且非空)，则将其设置为 ArtboardView 的背景
-    if (!backgroundImageToLoad.isNull()) {
-        myArtboardView->setBackgroundImage(backgroundImageToLoad);
-        qDebug() << "MainWindow: Background image" << fileName << "loaded and set.";
-    } else {
-        qWarning() << "MainWindow: Loaded background image is unexpectedly null for" << fileName;
-        QMessageBox::warning(this, tr("打开图片问题"), tr("图像已加载但内容为空或格式无法识别。"));
-        myArtboardView->clearBackgroundImage();
+    else // 否则，认为是保存为图片
+    {
+        // 调用渲染到图片的函数
+        QImage imageToSave = myArtboardView->renderToImage(); //
+        if (imageToSave.save(filePath)) {
+            QMessageBox::information(this, tr("导出成功"), tr("图像已成功导出。"));
+        } else {
+            QMessageBox::critical(this, tr("导出失败"), tr("无法将图像保存到指定文件。"));
+        }
     }
 }
 
@@ -613,5 +615,232 @@ void MainWindow::updateRedoActionState(bool available)
         qDebug() << "MainWindow: Redo action 'enabled' state set to:" << available;
     } else {
         qWarning("MainWindow::updateRedoActionState - ui->actionRedo is null!");
+    }
+}
+
+void MainWindow::on_actionGroup_triggered()
+{
+    if (!myArtboardView) return;
+
+    const QList<AbstractShape*>& selectedShapes = myArtboardView->getSelectedShapes();
+
+    // 只有当选中了多个图形时，编组才有意义
+    if (selectedShapes.count() >= 2) {
+        GroupCommand *command = new GroupCommand(selectedShapes, myArtboardView);
+        myArtboardView->executeCommand(command);
+    } else {
+        qDebug() << "Grouping requires at least two selected shapes.";
+    }
+}
+
+void MainWindow::on_actionUngroup_triggered()
+{
+    if (!myArtboardView) return;
+
+    const QList<AbstractShape*>& selectedShapes = myArtboardView->getSelectedShapes();
+
+    // 只有当恰好选中一个图形，并且这个图形是一个组时，取消编组才有意义
+    if (selectedShapes.count() == 1) {
+        // 使用 dynamic_cast 来安全地检查选中的图形是否是 GroupShape 类型
+        GroupShape *selectedGroup = dynamic_cast<GroupShape*>(selectedShapes.first());
+        if (selectedGroup) {
+            UngroupCommand *command = new UngroupCommand(selectedGroup, myArtboardView);
+            myArtboardView->executeCommand(command);
+        } else {
+            qDebug() << "Ungrouping requires a single selected group.";
+        }
+    } else {
+        qDebug() << "Ungrouping requires exactly one selected group.";
+    }
+}
+
+
+void MainWindow::setupAdaptiveIcons()
+{
+    // 1. 判断当前系统主题是深色还是浅色
+    // 我们通过检查窗口背景色的亮度来判断。亮度值小于128通常意味着是深色背景。
+    bool isDarkMode = this->palette().color(QPalette::Window).lightness() < 128;
+
+    // 2. 根据主题选择对应的图标文件后缀
+    QString themeSuffix = isDarkMode ? "_light" : "_dark";
+
+    // 3. 为你所有的QAction设置正确的图标
+    //    重要提示：下面的“:/icons/”是图标在Qt资源文件(.qrc)中的路径前缀。
+    //    请确保这个前缀和你自己在.qrc文件中设置的一致。如果不一致，请修改它。
+    QString iconPrefix = ":/icons/icons/";
+
+    // --- 文件与编辑操作 ---
+    if (ui->actionUndo) ui->actionUndo->setIcon(QIcon(iconPrefix + "undo" + themeSuffix + ".svg"));
+    if (ui->actionRedo) ui->actionRedo->setIcon(QIcon(iconPrefix + "redo" + themeSuffix + ".svg"));
+    if (ui->actionClearCanvas) ui->actionClearCanvas->setIcon(QIcon(iconPrefix + "clear" + themeSuffix + ".svg"));
+    if (ui->actionOpen) ui->actionOpen->setIcon(QIcon(iconPrefix + "file_open" + themeSuffix + ".svg"));
+    if (ui->actionSaveAs) ui->actionSaveAs->setIcon(QIcon(iconPrefix + "save" + themeSuffix + ".svg"));
+
+    // --- 绘图工具 ---
+    if (ui->actionSelectTool) ui->actionSelectTool->setIcon(QIcon(iconPrefix + "arrow_selector" + themeSuffix + ".svg"));
+    if (ui->actionDrawLine) ui->actionDrawLine->setIcon(QIcon(iconPrefix + "line" + themeSuffix + ".svg"));
+    if (ui->actionDrawRectangle) ui->actionDrawRectangle->setIcon(QIcon(iconPrefix + "square" + themeSuffix + ".svg"));
+    if (ui->actionDrawEllipse) ui->actionDrawEllipse->setIcon(QIcon(iconPrefix + "ellipse" + themeSuffix + ".svg"));
+    if (ui->actionDrawStar) ui->actionDrawStar->setIcon(QIcon(iconPrefix + "star" + themeSuffix + ".svg"));
+    if (ui->actionDrawFreehand) ui->actionDrawFreehand->setIcon(QIcon(iconPrefix + "freehand_pen" + themeSuffix + ".svg"));
+
+    // --- 属性与橡皮擦工具 ---
+    if (ui->actionChangeColor) ui->actionChangeColor->setIcon(QIcon(iconPrefix + "color" + themeSuffix + ".svg"));
+    // (假设actionChangeFillColor的图标文件是 inner_color)
+    if (ui->actionChangeFillColor) ui->actionChangeFillColor->setIcon(QIcon(iconPrefix + "inner_color" + themeSuffix + ".svg"));
+    if (ui->actionNormalEraser) ui->actionNormalEraser->setIcon(QIcon(iconPrefix + "normal_eraser" + themeSuffix + ".svg"));
+    if (ui->actionStrokeEraser) ui->actionStrokeEraser->setIcon(QIcon(iconPrefix + "clicking_eraser" + themeSuffix + ".svg"));
+    if (ui->actionDraggingStrokeEraser) ui->actionDraggingStrokeEraser->setIcon(QIcon(iconPrefix + "dragging_eraser" + themeSuffix + ".svg"));
+    if (ui->actionAiDraw) ui->actionAiDraw->setIcon(QIcon(iconPrefix + "ai_draw" + themeSuffix + ".svg"));
+    if (ui->actionGroup) ui->actionGroup->setIcon(QIcon(iconPrefix + "group" + themeSuffix + ".svg"));
+    if (ui->actionUngroup) ui->actionUngroup->setIcon(QIcon(iconPrefix + "ungroup" + themeSuffix + ".svg"));
+}
+
+// ----------------- mainwindow.cpp (请完整替换此函数) -----------------
+void MainWindow::on_actionAiDraw_triggered()
+{
+    // 1. 创建并显示我们自定义的新对话框
+    AiPromptDialog dialog(this);
+    // dialog.exec() 会显示对话框，并在这里暂停，直到用户点击OK或Cancel
+    if (dialog.exec() == QDialog::Accepted) {
+        // 2. 从对话框获取所有用户输入的数据
+        QString prompt = dialog.getPromptText();
+        QString selectedModel = dialog.getSelectedModelName();
+        QString apiKey = dialog.getApiKey();
+
+        // 3. 校验用户输入
+        if (prompt.isEmpty() || apiKey.isEmpty()) {
+            QMessageBox::warning(this, "输入错误", "绘画指令和API密钥均不能为空。");
+            return;
+        }
+
+        // 4. 根据用户选择，设置不同的API地址和模型名称
+        QString apiUrl;
+        QString modelName;
+
+        if (selectedModel == "DeepSeek-V3-0324") {
+            apiUrl = "https://api.deepseek.com/v1/chat/completions";
+            modelName = "deepseek-chat";
+        }
+        else if (selectedModel == "DeepSeek-R1-0528") { // <-- 新增的模型选项
+            apiUrl = "https://api.deepseek.com/v1/chat/completions";
+            modelName = "deepseek-reasoner"; // <-- 使用你指定的模型名称
+        }
+        else if (selectedModel == "OpenAI (GPT-3.5)") {
+            apiUrl = "https://api.openai.com/v1/chat/completions";
+            modelName = "gpt-3.5-turbo";
+        }
+        else if (selectedModel == "OpenAI (GPT-4 Turbo)") { // <-- 新增的模型选项
+            apiUrl = "https://api.openai.com/v1/chat/completions";
+            modelName = "gpt-4-turbo";
+        }
+        else {
+            QMessageBox::warning(this, "错误", "未知的AI模型选择: " + selectedModel);
+            return;
+        }
+
+        // --- 开始进行网络请求 ---
+        QNetworkAccessManager *manager = new QNetworkAccessManager(this);
+
+        // 5. 构造发送给API的JSON请求体
+        QJsonObject requestData;
+        requestData["model"] = modelName;
+
+        QJsonArray messages;
+        // ----------------- mainwindow.cpp (请在 on_actionAiDraw_triggered 函数中替换这部分) -----------------
+        QJsonObject systemMessage;
+        systemMessage["role"] = "system";
+        systemMessage["content"] = R"(You are an expert vector graphic designer assistant for a drawing application.
+Your task is to convert the user's request into a structured JSON format that the application can render.
+
+**Rules:**
+1. The JSON response MUST contain a single root key 'shapes', which is an array of shape objects.
+2. The canvas size is 800x600 pixels. All coordinates MUST be within the [0, 800] range for x and [0, 600] for y.
+3. Each shape object must have a 'type' property. Supported types are 'Rectangle', 'Ellipse', 'Star', 'Line', 'Freehand'.
+4. **A new container type 'Group' is now supported.** A 'Group' object does not have geometry or color properties. Instead, it MUST have a 'children' property, which is an array of other shape objects (which can even be other groups).
+5. For 'Rectangle', 'Ellipse', or 'Star', geometry must contain 'x', 'y', 'width', 'height'.
+6. For 'Line', geometry must contain 'p1' and 'p2' as arrays of two numbers.
+7. For 'Freehand', geometry must contain a 'points' array, which is an array of [x,y] point arrays.
+8. Optional properties are 'pen_width', 'border_color', 'rotation', 'is_filled', 'fill_color'.
+9. Decompose complex objects into simpler shapes.
+10. ONLY respond with the raw JSON object. Do not include any extra text, explanations, or markdown fences like ```json.
+
+**Example of a Group:**
+To draw a face, you could group the head and eyes:
+{
+  "shapes": [
+    {
+      "type": "Group",
+      "children": [
+        { "type": "Ellipse", "geometry": {"x":100, "y":100, "width":200, "height":200}, "fill_color": "#FFFF00" },
+        { "type": "Ellipse", "geometry": {"x":150, "y":160, "width":20, "height":20}, "fill_color": "#000000" },
+        { "type": "Ellipse", "geometry": {"x":230, "y":160, "width":20, "height":20}, "fill_color": "#000000" }
+      ]
+    }
+  ]
+}
+
+Now, convert the user's following request.
+)";
+
+        QJsonObject userMessage;
+        userMessage["role"] = "user";
+        userMessage["content"] = prompt;
+        messages.append(systemMessage);
+        messages.append(userMessage);
+        requestData["messages"] = messages;
+
+        // 6. 设置API请求的地址和头部信息
+        QNetworkRequest request{QUrl(apiUrl)};
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        // 使用从对话框中获取的apiKey
+        request.setRawHeader("Authorization", ("Bearer " + apiKey).toUtf8());
+
+        // 7. 发送POST请求，并设置回调函数来异步处理返回结果
+        QNetworkReply *reply = manager->post(request, QJsonDocument(requestData).toJson());
+
+        QMessageBox* msgBox = new QMessageBox(QMessageBox::Information, "AI正在创作中", "请稍候...", QMessageBox::NoButton, this);
+        msgBox->setStandardButtons(QMessageBox::NoButton);
+        msgBox->show();
+
+        connect(reply, &QNetworkReply::finished, this, [=]() {
+            msgBox->close();
+            delete msgBox;
+
+            if (reply->error() == QNetworkReply::NoError) {
+                // 8. 解析返回的JSON数据
+                QByteArray responseData = reply->readAll();
+                QJsonObject jsonResponse = QJsonDocument::fromJson(responseData).object();
+                QString aiContent = jsonResponse["choices"].toArray()[0].toObject()["message"].toObject()["content"].toString();
+
+                // (数据清洗逻辑，以防万一AI还是返回了Markdown)
+                int firstBrace = aiContent.indexOf('{');
+                int lastBrace = aiContent.lastIndexOf('}');
+                if (firstBrace != -1 && lastBrace != -1) {
+                    aiContent = aiContent.mid(firstBrace, lastBrace - firstBrace + 1);
+                }
+
+                QJsonObject shapeData = QJsonDocument::fromJson(aiContent.toUtf8()).object();
+                QJsonArray shapesArray = shapeData["shapes"].toArray();
+
+                QList<AbstractShape*> newShapes;
+                for (const QJsonValue &val : shapesArray) {
+                    AbstractShape* shape = AbstractShape::fromJsonObject(val.toObject());
+                    if (shape) {
+                        newShapes.append(shape);
+                    }
+                }
+
+                if (!newShapes.isEmpty()) {
+                    myArtboardView->executeCommand(new AddMultipleShapesCommand(newShapes, myArtboardView));
+                }
+            } else {
+                QString errorString = reply->errorString();
+                QMessageBox::critical(this, "AI创作失败", "请求失败，请检查网络或API Key。\n错误信息: " + errorString);
+            }
+
+            reply->deleteLater();
+            manager->deleteLater();
+        });
     }
 }

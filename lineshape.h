@@ -8,6 +8,7 @@
 
 #include "abstractshape.h" // 包含基类 AbstractShape 的头文件
 #include <QPoint>         // 直线图形使用 QPoint 来定义其端点
+#include <QJsonObject>
 
 /// @brief LineShape 类代表画布上的一条直线段。
 /// 它继承自 AbstractShape，并实现了绘制直线、计算边界、判断点包含以及移动等操作。
@@ -38,6 +39,8 @@ public:
     /// @brief 重写基类的 getBoundingRect 方法，计算并返回直线的最小外接矩形。
     /// @return QRect 对象，表示直线的 Surrounding box。
     QRect getBoundingRect() const override;
+
+    QRectF getCoreGeometry() const override;
 
     /// @brief 重写基类的 containsPoint 方法，判断给定点是否在线段的有效点击区域内。
     /// @param point 要测试的点。
@@ -70,6 +73,10 @@ public:
     /// @brief 设置直线的结束点。
     /// @param point 新的结束点。
     void setEndPoint(const QPoint &point) { p2_end = point; }
+
+    QJsonObject toJsonObject() const override;
+
+    QPointF getCenter() const override;
 
 private:
     // 存储直线特有的几何数据

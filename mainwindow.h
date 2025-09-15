@@ -85,10 +85,19 @@ private slots:
     /// @brief 响应“清空画布”动作 (actionClearCanvas) 被触发。
     void on_actionClearCanvas_triggered();
     /// @brief 响应“导出图片”动作 (actionExportImage) 被触发。
-    void on_actionExportImage_triggered();
-    /// @brief 响应“打开图片”动作 (actionOpenImage) 被触发。
-    void on_actionOpenImage_triggered();
 
+
+
+
+    void on_actionOpen_triggered();    // 对应新的 actionOpen
+
+    void on_actionSaveAs_triggered();  // 对应新的 actionSaveAs
+
+    void on_actionGroup_triggered();
+
+    void on_actionUngroup_triggered();
+
+    void on_actionAiDraw_triggered();
     // --- 更新UI状态的槽函数 (响应来自 ArtboardView 的信号) ---
     /// @brief 更新“撤销”按钮的启用/禁用状态。
     /// @param available 如果为 true，则启用撤销按钮；否则禁用。
@@ -106,6 +115,8 @@ private:
 
     QActionGroup *drawingToolGroup; ///< 用于管理所有绘图工具 QAction 的动作组。
         ///< 设置为互斥 (exclusive)，以确保一次只能选择一个绘图工具。
+
+    void setupAdaptiveIcons();
 };
 
 #endif // MAINWINDOW_H

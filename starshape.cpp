@@ -1,204 +1,192 @@
-// ---------------------------------------------------------------------------
-// 描述: StarShape 类的实现文件。
-//       包含构造函数、绘制方法 (核心是计算星形顶点)、边界计算、点击判断等。
-// ---------------------------------------------------------------------------
+// ----------------- starshape.cpp (重构版) -----------------
 
 #include "starshape.h"
 #include <QPainter>
-#include <QPainterPath>         // 用于 containsPoint 的精确判断 (边框)
-#include <QPainterPathStroker>  // 用于 containsPoint 的精确判断 (边框)
-#include <QPen>                 // 用于设置画笔
-#include <QBrush>               // 用于设置画刷 (填充)
-#include <cmath>                // M_PI 和三角函数 sin, cos (std::sin, std::cos)
-#include <QDebug>               // 用于调试输出 (如果需要)
+#include <QPainterPath>
+#include <QPainterPathStroker>
+#include <cmath>
+#include <QJsonArray>
+#include <QJsonObject>
 
-// 定义 M_PI (圆周率)，以防 cmath 中没有默认提供
 #ifndef M_PI
-#define M_PI 3.14159265358979323846264338327950288
+#define M_PI 3.14159265358979323846
 #endif
 
-/// @brief StarShape 构造函数的实现。
-/// @param point1 定义星形外接矩形的一个角点。
-/// @param point2 定义星形外接矩形的另一个角点。
-/// @param borderColor 星形的边框颜色。
-/// @param penWidth 星形的边框线宽。
-/// @param filled 星形是否被填充。
-/// @param fillColor 星形的填充颜色。
-/// @param numPoints 星形的角数，默认为5。如果小于3，则强制设为3（三角形）。
-StarShape::StarShape(const QPoint &point1, const QPoint &point2,
-                     const QColor &borderColor, int penWidth,
-                     bool filled, const QColor &fillColor, int numPoints)
-    : AbstractShape(ShapeType::Star, borderColor, penWidth, filled, fillColor), // 调用基类构造函数
-    m_point1(point1),
-    m_point2(point2),
-    m_numPoints(numPoints < 3 ? 3 : numPoints) // 确保角数至少为3 (三角形)
+StarShape::StarShape(const QRectF &rect, const QColor &borderColor, int penWidth, bool filled, const QColor &fillColor, int numPoints)
+    : AbstractShape(ShapeType::Star, borderColor, penWidth, filled, fillColor),
+    m_rect(rect),
+    m_numPoints(numPoints < 3 ? 3 : numPoints)
 {
-    // qDebug() << "StarShape created with" << m_numPoints << "points.";
 }
 
-/// @brief 根据 m_point1 和 m_point2 计算并返回一个标准化的 QRectF。
-/// 标准化意味着矩形的左上角 x,y 坐标总是小于等于右下角 x,y 坐标。
-/// 使用 QRectF 是为了在计算顶点时有更高的精度。
-QRectF StarShape::getNormalizedRectF() const
+QPolygonF StarShape::calculateStarVertices() const
 {
-    return QRectF(m_point1, m_point2).normalized();
-}
+    // [ 新增的关键一行 ]
+    // 无论 m_rect 内部状态如何，我们始终在一个标准化的矩形上进行计算
+    QRectF bounds = m_rect.normalized();
 
-/// @brief 根据给定的外接矩形 `bounds` 和角数 `m_numPoints` 计算星形的顶点。
-/// 这是绘制星形的核心几何计算。
-/// @param bounds 定义星形绘制范围的 QRectF 对象。
-/// @return QPolygonF 对象，包含星形的所有顶点坐标。
-QPolygonF StarShape::calculateStarVertices(const QRectF &bounds) const
-{
-    QPolygonF starPolygon; // 用于存储计算出的顶点
+    QPolygonF starPolygon;
 
-    // 确保角数有效，并且包围盒有效，否则返回空的多边形
+    // [ 下面的所有 m_rect 都要改成 bounds ]
     if (m_numPoints < 3 || bounds.width() <= 0 || bounds.height() <= 0) {
         return starPolygon;
     }
 
-    // 计算中心点和半径
     qreal centerX = bounds.center().x();
     qreal centerY = bounds.center().y();
-    // 外顶点半径取包围盒宽度和高度中较小值的一半，以确保星形能完整放入
     qreal outerRadius = qMin(bounds.width() / 2.0, bounds.height() / 2.0);
-    // 内顶点半径通常是外顶点半径的一个比例，这个比例决定了星形的“尖锐度”
-    // 对于标准的五角星，这个比例大约是 sin(18°)/sin(54°) ≈ 0.381966
-    // 我们可以用一个可调的比例，例如 0.4 到 0.5 之间
-    qreal innerRadiusFactor = 0.45; // 可调整此因子来改变星形外观
-    if (m_numPoints == 5) { // 对标准五角星使用更精确的比例
-        innerRadiusFactor = 0.381966;
-    } else if (m_numPoints == 3 || m_numPoints == 4) { // 三角形或四角星（菱形）没有内凹点
-        innerRadiusFactor = 1.0; // 或者直接画正多边形
-    }
-    qreal innerRadius = outerRadius * innerRadiusFactor;
+    qreal innerRadius = outerRadius * 0.45; // 简化因子，你可以调整它来改变星形外观
 
-    // 计算每个顶点（外顶点和内顶点）之间的角度步长
-    qreal angleStep = M_PI / m_numPoints; // 这是从一个外顶点到下一个内顶点（或反之）的角度差
-        // 所以一个完整的“角”由 2 * angleStep 构成
+    qreal angleStep = M_PI / m_numPoints;
+    qreal startAngle = -M_PI / 2.0; // 让一个角朝上
 
-    // 设置起始角度，通常让一个顶点指向正上方 (-PI/2 或 270度) 或正右方 (0度)
-    // -M_PI / 2.0 使得第一个最外层顶点在顶部中央
-    qreal startAngle = -M_PI / 2.0;
-
-    // 循环计算 m_numPoints * 2 个顶点 (m_numPoints 个外顶点, m_numPoints 个内顶点)
     for (int i = 0; i < m_numPoints * 2; ++i) {
-        // 根据索引 i 的奇偶性交替使用外半径和内半径
         qreal currentRadius = (i % 2 == 0) ? outerRadius : innerRadius;
-        // 计算当前顶点的角度
         qreal currentAngle = startAngle + i * angleStep;
-
-        // 使用三角函数计算顶点的 x, y 坐标
         qreal x = centerX + currentRadius * std::cos(currentAngle);
         qreal y = centerY + currentRadius * std::sin(currentAngle);
-        starPolygon << QPointF(x, y); // 将计算出的顶点添加到多边形中
+        starPolygon << QPointF(x, y);
     }
-
     return starPolygon;
 }
 
-/// @brief StarShape 类的 draw 方法实现。
-/// 计算星形顶点，并使用 QPainter 绘制填充（如果启用）和边框。
+
 void StarShape::draw(QPainter *painter)
 {
-    if (!painter) { // 安全检查
-        qWarning("StarShape::draw() - Painter is null!");
+    if (!painter || m_rect.isNull() || m_rect.width() <= 0) {
         return;
     }
 
-    QRectF rect = getNormalizedRectF(); // 获取标准化的外接矩形
-    // 如果外接矩形无效或尺寸为0，则不进行绘制
-    if (rect.isNull() || !rect.isValid() || rect.width() <= 0 || rect.height() <= 0) {
+    painter->save(); // 保存状态
+
+    // 以矩形中心为旋转中心
+    QPointF center = m_rect.center();
+    painter->translate(center);
+    painter->rotate(m_rotationAngle);
+    painter->translate(-center);
+
+    // 计算星形的顶点
+    QPolygonF starPolygon = calculateStarVertices();
+    if (starPolygon.isEmpty()) {
+        painter->restore(); // 即使没有顶点也要恢复状态，避免影响后续绘制
         return;
     }
 
-    QPolygonF starPolygon = calculateStarVertices(rect); // 计算星形的顶点
-    if (starPolygon.isEmpty()) { // 如果没有计算出有效顶点，则不绘制
-        return;
+    // 设置画笔和画刷
+    painter->setPen(QPen(this->getBorderColor(), this->getPenWidth()));
+    if (this->isFilled()) {
+        painter->setBrush(QBrush(this->getFillColor()));
+    } else {
+        painter->setBrush(Qt::NoBrush);
     }
 
-    painter->save(); // 保存 QPainter 当前状态 (画笔、画刷等)
-
-    // 1. 设置画笔 (用于绘制边框)
-    QPen pen;
-    pen.setColor(this->getBorderColor()); // 使用基类提供的边框颜色
-    pen.setWidth(this->getPenWidth());   // 使用基类提供的线宽
-    // pen.setJoinStyle(Qt::MiterJoin); // 对于尖角，MiterJoin效果可能更好
-    painter->setPen(pen);
-
-    // 2. 设置画刷 (用于填充图形内部)
-    if (this->isFilled()) { // 如果启用了填充
-        QBrush brush;
-        brush.setColor(this->getFillColor());   // 使用基类提供的填充颜色
-        brush.setStyle(Qt::SolidPattern);     // 设置为实心填充
-        painter->setBrush(brush);
-    } else { // 如果不填充
-        painter->setBrush(Qt::NoBrush); // 设置为无填充画刷
-    }
-
-    // 3. 绘制星形多边形
+    // 在旋转后的坐标系上绘制星形
     painter->drawPolygon(starPolygon);
 
-    painter->restore(); // 恢复 QPainter 到 save() 之前的状态
+    painter->restore(); // 恢复状态
 }
 
-/// @brief StarShape 类的 getBoundingRect 方法实现。
-/// 返回定义星形的外接矩形（转换为整数坐标的 QRect）。
-QRect StarShape::getBoundingRect() const
+// ----------------- 替换这三个文件中的 getBoundingRect 函数 -----------------
+QRect StarShape::getBoundingRect() const // "TheShape" 指代 RectangleShape, EllipseShape 或 StarShape
 {
-    return getNormalizedRectF().toAlignedRect(); // toAlignedRect() 确保像素对齐
+    // 如果没有旋转，就用最快的方式返回
+    if (m_rotationAngle == 0.0) {
+        return m_rect.normalized().toAlignedRect();
+    }
+
+    // 1. 创建一个变换矩阵
+    QTransform transform;
+    // 2. 以图形中心为原点
+    transform.translate(m_rect.center().x(), m_rect.center().y());
+    // 3. 旋转
+    transform.rotate(m_rotationAngle);
+    // 4. 将原点移回
+    transform.translate(-m_rect.center().x(), -m_rect.center().y());
+
+    // 5. 使用这个矩阵来映射（计算）旋转后的外包围盒
+    return transform.mapRect(m_rect.normalized()).toAlignedRect();
 }
 
-/// @brief StarShape 类的 containsPoint 方法实现。
-/// 判断给定点是否在星形内部（如果填充）或其边框附近（如果只画边框）。
-bool StarShape::containsPoint(const QPoint &point) const
+// ----------------- 替换这三个文件中的 containsPoint 函数 -----------------
+bool StarShape::containsPoint(const QPoint &point) const // "TheShape" 指代 RectangleShape 等
 {
-    QRectF rect = getNormalizedRectF();
-    if (rect.isNull() || !rect.isValid() || rect.width() <= 0 || rect.height() <= 0) {
-        return false; // 无效的星形不包含任何点
+    // 如果没有旋转，用最快的方式判断
+    if (m_rotationAngle == 0.0) {
+        // 这里是你原来的 containsPoint 逻辑
+        if (isFilled()) { return m_rect.contains(point); }
+        else { /* ... stroker logic ... */ }
     }
 
-    QPolygonF starPolygon = calculateStarVertices(rect); // 获取星形的顶点
-    if (starPolygon.isEmpty()) {
-        return false;
-    }
+    // 1. 创建与 draw() 方法中完全一样的变换矩阵
+    QTransform transform;
+    transform.translate(m_rect.center().x(), m_rect.center().y());
+    transform.rotate(m_rotationAngle);
+    transform.translate(-m_rect.center().x(), -m_rect.center().y());
 
-    // 将整数点转换为浮点型，以便与 QPolygonF 和 QPainterPath 进行比较
-    QPointF pointF(point);
+    // 2. 获取该变换的“逆矩阵”
+    QTransform inverseTransform = transform.inverted();
 
-    if (this->isFilled()) { // 如果星形是填充的
-        // 使用 QPolygonF::containsPoint 来判断点是否在多边形内部。
-        // Qt::OddEvenFill 是标准的填充规则，用于判断点是否在复杂（自相交）多边形内部。
-        return starPolygon.containsPoint(pointF, Qt::OddEvenFill);
-    } else { // 如果星形只画边框
-        // 使用 QPainterPath 和 QPainterPathStroker 来创建一个代表“有宽度”的星形边框路径，
-        // 然后判断点是否在该描边路径内部。
+    // 3. 将用户点击的点，通过逆矩阵，“反向旋转”回去
+    QPointF unrotatedPoint = inverseTransform.map(QPointF(point));
+
+    // 4. 判断这个“反向旋转”后的点，是否在“未旋转”的原始图形内部
+    //    这里的逻辑就和我们之前写的 containsPoint 完全一样了
+    if (isFilled()) {
+        return m_rect.contains(unrotatedPoint);
+    } else {
         QPainterPath path;
-        path.addPolygon(starPolygon); // 从顶点创建路径
-        path.closeSubpath();          // 确保路径是闭合的，以便stroker正确工作
-
+        path.addPolygon(calculateStarVertices());
         QPainterPathStroker stroker;
-        stroker.setWidth(this->getPenWidth() + 4.0); // 线宽加上一些容差，方便点击
-        QPainterPath strokedPath = stroker.createStroke(path); // 生成描边路径
-
-        return strokedPath.contains(pointF);
+        stroker.setWidth(this->getPenWidth() + 4.0);
+        return stroker.createStroke(path).contains(unrotatedPoint);
     }
 }
 
-/// @brief StarShape 类的 moveBy 方法实现。
-/// 将定义星形外接矩形的两个点都按照给定的偏移量进行平移。
 void StarShape::moveBy(const QPoint &offset)
 {
-    m_point1 += offset; // 平移第一个定义点
-    m_point2 += offset; // 平移第二个定义点
-    // 由于星形的顶点是根据 m_point1 和 m_point2 实时计算的，
-    // 所以移动这两个点就相当于移动了整个星形。
+    m_rect.translate(offset);
 }
 
-/// @brief StarShape 类的 updateShape 方法实现。
-/// 通常在鼠标拖动创建或修改星形时调用，用于更新其外接矩形的定义。
-/// 在我的实现中，是更新定义外接矩形的第二个点 m_point2。
 void StarShape::updateShape(const QPoint &point)
 {
-    m_point2 = point; // 将外接矩形的第二个定义点更新为当前鼠标位置
+    m_rect.setBottomRight(point);
+}
+
+void StarShape::setGeometry(const QRect &rect)
+{
+    m_rect = rect;
+}
+
+QJsonObject StarShape::toJsonObject() const
+{
+    // 1. 创建基础 JSON 对象并填充通用属性
+    QJsonObject json;
+    json["type"] = "Star"; // 类型为 "Star"
+    json["pen_width"] = this->getPenWidth();
+    json["border_color"] = this->getBorderColor().name();
+    json["is_filled"] = this->isFilled();
+    json["fill_color"] = this->getFillColor().name(QColor::HexArgb);
+
+    // 2. 创建 geometry 对象并填充星形特有的几何属性
+    QJsonObject geometry;
+    geometry["x"] = m_rect.x(); //
+    geometry["y"] = m_rect.y();
+    geometry["width"] = m_rect.width();
+    geometry["height"] = m_rect.height();
+    geometry["num_points"] = m_numPoints; // <-- 保存星形的角点数
+
+    // 3. 将 geometry 对象放入主对象中
+    json["geometry"] = geometry;
+
+    return json;
+}
+
+QPointF StarShape::getCenter() const
+{
+    return m_rect.center();
+}
+
+QRectF StarShape::getCoreGeometry() const
+{
+    return m_rect;
 }

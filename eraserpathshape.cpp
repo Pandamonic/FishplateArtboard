@@ -10,6 +10,8 @@
 #include <QBrush>               // draw 方法中明确设置为 NoBrush (虽然橡皮擦是用"笔"画的)
 #include <QPainterPathStroker>  // getBoundingRect 和 containsPoint 方法需要
 #include <QDebug>               // 用于调试输出
+#include <QJsonArray>
+#include <QJsonObject>
 
 /// @brief EraserPathShape 构造函数的实现。
 /// @param points 构成橡皮擦轨迹的初始点集。
@@ -51,35 +53,35 @@ void EraserPathShape::buildPath()
     }
 }
 
-/// @brief EraserPathShape 类的 draw 方法实现。
-/// 使用 QPainter 以橡皮擦的指定颜色（通常是背景色）和宽度绘制路径，从而实现“擦除”效果。
+// ----------------- eraserpathshape.cpp (请完整替换此函数) -----------------
 void EraserPathShape::draw(QPainter *painter)
 {
-    if (!painter || m_painterPath.isEmpty()) { // 安全检查
+    if (!painter || m_painterPath.isEmpty()) {
         return;
     }
 
-    painter->save(); // 保存 QPainter 当前状态
+    painter->save(); // 保存状态
 
-    // 1. 创建并配置画笔 (QPen) 用于“擦除”
+    // 同样以路径包围盒的中心为旋转中心
+    QPointF center = m_painterPath.boundingRect().center();
+    painter->translate(center);
+    painter->rotate(m_rotationAngle);
+    painter->translate(-center);
+
+    // 设置画笔（橡皮擦的“笔”）
     QPen eraserPen;
-    // 使用从基类继承的 shapeColor 作为橡皮擦的颜色 (在构造时传入的是画布背景色)
     eraserPen.setColor(this->shapeColor);
-    // 使用从基类继承的 shapePenWidth 作为橡皮擦的宽度（粗细）
     eraserPen.setWidth(this->shapePenWidth);
-    // 圆形的线帽和连接点能使橡皮擦的擦除边缘看起来更平滑、自然
     eraserPen.setCapStyle(Qt::RoundCap);
     eraserPen.setJoinStyle(Qt::RoundJoin);
     painter->setPen(eraserPen);
 
-    // 2. 橡皮擦是通过绘制路径来实现的，它本身不应该被“填充”另一种颜色。
-    //    明确设置画刷为 NoBrush，以防止意外的填充效果。
     painter->setBrush(Qt::NoBrush);
 
-    // 3. 绘制预先构建好的 QPainterPath 对象 (即橡皮擦轨迹)
+    // 在旋转后的坐标系上绘制路径
     painter->drawPath(m_painterPath);
 
-    painter->restore(); // 恢复 QPainter 状态
+    painter->restore(); // 恢复状态
 }
 
 /// @brief EraserPathShape 类的 getBoundingRect 方法实现。
@@ -152,4 +154,42 @@ void EraserPathShape::setPoints(const QVector<QPoint> &points)
 {
     m_points = points;
     buildPath();
+}
+
+QJsonObject EraserPathShape::toJsonObject() const
+{
+    // 1. 创建基础 JSON 对象并填充通用属性
+    QJsonObject json;
+    json["type"] = "NormalEraser"; // 类型为 "NormalEraser"
+    json["pen_width"] = this->getPenWidth();
+    // 对于橡皮擦，其“边框色”就是背景色，我们也记录下来
+    json["border_color"] = this->getBorderColor().name();
+
+    // 2. 创建 geometry 对象并填充点集数据
+    QJsonObject geometry;
+    QJsonArray pointsArray;
+
+    // 遍历 m_points 向量中的所有点
+    for(const QPoint &p : m_points){ //
+        // 将每个 QPoint(x,y) 转换为 [x, y] 数组，并添加到 pointsArray 中
+        pointsArray.append(QJsonArray({p.x(), p.y()}));
+    }
+    geometry["points"] = pointsArray;
+
+    // 3. 将 geometry 对象放入主对象中
+    json["geometry"] = geometry;
+
+    return json;
+}
+
+// ----------------- eraserpathshape.cpp (新增函数) -----------------
+QPointF EraserPathShape::getCenter() const
+{
+    // 橡皮擦路径的几何中心，同样是其外包围盒的中心
+    return m_painterPath.boundingRect().center();
+}
+
+QRectF EraserPathShape::getCoreGeometry() const
+{
+    return getBoundingRect();
 }

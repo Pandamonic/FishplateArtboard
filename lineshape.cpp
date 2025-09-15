@@ -8,6 +8,8 @@
 #include <QPainterPath>        // containsPoint 方法使用 QPainterPath
 #include <QPainterPathStroker> // containsPoint 方法使用 QPainterPathStroker
 #include <QPen>                // draw 方法使用 QPen
+#include <QJsonArray>
+#include <QJsonObject>
 
 // LineShape 类的构造函数实现
 LineShape::LineShape(const QPoint &start, const QPoint &end,
@@ -25,66 +27,62 @@ LineShape::LineShape(const QPoint &start, const QPoint &end,
     // qDebug() << "LineShape object created. Start:" << p1_start << "End:" << p2_end;
 }
 
-// LineShape 类的 draw 方法实现
-// 此方法定义了如何使用 QPainter 将直线绘制到画布上。
+
 void LineShape::draw(QPainter *painter)
 {
-    // 安全检查：确保 QPainter 指针有效, 防止空指针出现。
     if (!painter) {
         qWarning("LineShape::draw() - Painter is null!");
         return;
     }
 
-    // 1. 创建并配置画笔 (QPen)
-    QPen pen;
-    pen.setColor(this->shapeColor);       // 设置画笔颜色 (从基类继承的边框颜色)
-    pen.setWidth(this->shapePenWidth);    // 设置画笔宽度 (从基类继承的线宽)
-    pen.setCapStyle(Qt::RoundCap);        // 设置线帽样式为圆形，使线条端点看起来更平滑
-    // pen.setStyle(Qt::SolidLine);      // (可选) 明确画笔样式，默认为实线
-    ///@note 这里未来可以添加一下，换一种画笔（比如说做虚线笔，铅笔，毛笔......）
+    painter->save(); // 保存状态
 
-    // 2. 将配置好的画笔应用到 QPainter
+    // 计算直线的中心点作为旋转中心
+    QPointF center = (p1_start.toPointF() + p2_end.toPointF()) / 2.0;
+    painter->translate(center);
+    painter->rotate(m_rotationAngle);
+    painter->translate(-center);
+
+    // 设置画笔
+    QPen pen;
+    pen.setColor(this->shapeColor);
+    pen.setWidth(this->shapePenWidth);
+    pen.setCapStyle(Qt::RoundCap);
     painter->setPen(pen);
 
-    // 3. 使用 QPainter 的 drawLine 方法绘制直线
-    //    参数为 LineShape 自身的成员变量 p1_start 和 p2_end
+    // 在旋转后的坐标系上绘制直线
     painter->drawLine(this->p1_start, this->p2_end);
+
+    painter->restore(); // 恢复状态
 }
 
-// LineShape 类的 getBoundingRect 方法实现
-// 返回包含直线段的最小外接矩形。
 QRect LineShape::getBoundingRect() const
 {
-    // 使用直线的两个端点 p1_start 和 p2_end 来构造一个 QRect。
-    // .normalized() 方法确保返回的矩形的左上角坐标值
-    // 总是小于等于右下角坐标值，即宽度和高度为正。
-    return QRect(p1_start, p2_end).normalized();
+    if (m_rotationAngle == 0.0) return QRect(p1_start, p2_end).normalized();
+    QTransform t;
+    QPointF center = (p1_start.toPointF() + p2_end.toPointF()) / 2.0;
+    t.translate(center.x(), center.y());
+    t.rotate(m_rotationAngle);
+    t.translate(-center.x(), -center.y());
+    return t.mapRect(QRect(p1_start, p2_end));
 }
 
-// LineShape 类的 containsPoint 方法实现
-// 判断给定的点是否“足够接近”这条直线段（考虑到线宽）。
 bool LineShape::containsPoint(const QPoint &point) const
 {
-    // 使用 QPainterPath 和 QPainterPathStroker 来创建一个代表“有宽度”的直线路径，
-    // 然后判断点是否在该路径内部。这是一种比较精确和通用的方法。
+    QTransform t;
+    QPointF center = (p1_start.toPointF() + p2_end.toPointF()) / 2.0;
+    t.translate(center.x(), center.y());
+    t.rotate(m_rotationAngle);
+    t.translate(-center.x(), -center.y());
 
-    // 1. 创建一个表示直线中心线的 QPainterPath
-    QPainterPath centerLinePath;
-    centerLinePath.moveTo(p1_start);
-    centerLinePath.lineTo(p2_end);
+    QPointF unrotatedPoint = t.inverted().map(QPointF(point));
 
-    // 2. 创建 QPainterPathStroker 对象用于生成描边路径
+    QPainterPath path;
+    path.moveTo(p1_start);
+    path.lineTo(p2_end);
     QPainterPathStroker stroker;
-    // 设置描边的宽度。基于图形的实际线宽，并可以增加一些容差值，
-    // 使得用户更容易点击到较细的线条。
-    stroker.setWidth(this->shapePenWidth + 4.0); // 例如，增加4个像素的点击容差
-    stroker.setCapStyle(Qt::FlatCap); // 对于点击检测，平头线帽可能更符合直线的几何边界
-
-    // 3. 生成描边路径 (stroked path)
-    QPainterPath strokedPath = stroker.createStroke(centerLinePath);
-
-    // 4. 判断点是否在生成的描边路径内部
-    return strokedPath.contains(point);
+    stroker.setWidth(this->getPenWidth() + 4.0);
+    return stroker.createStroke(path).contains(unrotatedPoint);
 }
 
 // LineShape 类的 moveBy 方法实现
@@ -101,4 +99,33 @@ void LineShape::moveBy(const QPoint &offset)
 void LineShape::updateShape(const QPoint &point)
 {
     p2_end = point; // 将直线的结束点更新为当前鼠标位置
+}
+
+
+
+QJsonObject LineShape::toJsonObject() const
+{
+    QJsonObject json;
+    json["type"] = "Line";
+    json["pen_width"] = this->getPenWidth();
+    json["border_color"] = this->getBorderColor().name();
+
+    QJsonObject geometry;
+    // 将 QPoint(x,y) 转换为 [x, y] 数组
+    geometry["p1"] = QJsonArray({p1_start.x(), p1_start.y()});
+    geometry["p2"] = QJsonArray({p2_end.x(), p2_end.y()});
+    json["rotation"] = m_rotationAngle;
+
+    json["geometry"] = geometry;
+    return json;
+}
+
+QPointF LineShape::getCenter() const
+{
+    return (p1_start.toPointF() + p2_end.toPointF()) / 2.0;
+}
+
+QRectF LineShape::getCoreGeometry() const
+{
+    return getBoundingRect();
 }

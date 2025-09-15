@@ -1,6 +1,6 @@
 QT       += core gui svg
 
-greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
+greaterThan(QT_MAJOR_VERSION, 4): QT += widgets sql network
 
 CONFIG += c++17
 
@@ -15,7 +15,10 @@ RC_ICON = app_icon.ico
 
 
 SOURCES += \
+    abstractshape.cpp \
+    addmultipleshapescommand.cpp \
     addshapecommand.cpp \
+    aipromptdialog.cpp \
     artboardview.cpp \
     clearallcommand.cpp \
     deletemultipleshapescommand.cpp \
@@ -23,17 +26,25 @@ SOURCES += \
     ellipseshape.cpp \
     eraserpathshape.cpp \
     freehandpathshape.cpp \
+    groupcommand.cpp \
+    groupshape.cpp \
     lineshape.cpp \
     main.cpp \
     mainwindow.cpp \
+    movemultipleshapescommand.cpp \
     moveshapecommand.cpp \
     rectangleshape.cpp \
-    starshape.cpp
+    resizecommand.cpp \
+    rotatecommand.cpp \
+    starshape.cpp \
+    ungroupcommand.cpp
 
 HEADERS += \
     abstractcommand.h \
     abstractshape.h \
+    addmultipleshapescommand.h \
     addshapecommand.h \
+    aipromptdialog.h \
     artboardview.h \
     clearallcommand.h \
     deletemultipleshapescommand.h \
@@ -41,14 +52,21 @@ HEADERS += \
     ellipseshape.h \
     eraserpathshape.h \
     freehandpathshape.h \
+    groupcommand.h \
+    groupshape.h \
     lineshape.h \
     mainwindow.h \
+    movemultipleshapescommand.h \
     moveshapecommand.h \
     rectangleshape.h \
+    resizecommand.h \
+    rotatecommand.h \
     shared_types.h \
-    starshape.h
+    starshape.h \
+    ungroupcommand.h
 
 FORMS += \
+    aipromptdialog.ui \
     mainwindow.ui
 
 # Default rules for deployment.
